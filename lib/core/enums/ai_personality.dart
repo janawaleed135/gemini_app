@@ -1,14 +1,15 @@
-/// Defines the AI personality modes available in the app
+/// Defines the different AI personality types available
 enum AIPersonality {
-  /// Professional teacher mode - patient, pedagogical, structured
+  /// Professional teacher mode - patient, encouraging, educational
   tutor,
   
-  /// Friendly peer mode - casual, collaborative, encouraging
+  /// Friendly study buddy mode - casual, relatable, collaborative
   classmate,
 }
 
+/// Extension methods for AIPersonality enum
 extension AIPersonalityExtension on AIPersonality {
-  /// Get user-friendly name
+  /// Returns display name for the personality
   String get displayName {
     switch (this) {
       case AIPersonality.tutor:
@@ -18,7 +19,7 @@ extension AIPersonalityExtension on AIPersonality {
     }
   }
   
-  /// Get emoji icon
+  /// Returns emoji icon for the personality
   String get icon {
     switch (this) {
       case AIPersonality.tutor:
@@ -28,13 +29,23 @@ extension AIPersonalityExtension on AIPersonality {
     }
   }
   
-  /// Get description
+  /// Returns short description of the personality
   String get description {
     switch (this) {
       case AIPersonality.tutor:
-        return 'Professional guidance and structured learning';
+        return 'Your patient AI teacher who guides you through learning with encouragement and expertise.';
       case AIPersonality.classmate:
-        return 'Casual conversation and peer collaboration';
+        return 'Your friendly study buddy who learns alongside you in a casual, relatable way.';
+    }
+  }
+  
+  /// Returns welcome message for the personality
+  String get welcomeMessage {
+    switch (this) {
+      case AIPersonality.tutor:
+        return 'Hello! I\'m your AI Tutor. I\'m here to help you learn and grow. What would you like to explore today? 😊';
+      case AIPersonality.classmate:
+        return 'Hey! I\'m your study buddy! Let\'s learn together. What are we tackling today? 😄';
     }
   }
 }
