@@ -1,15 +1,16 @@
-/// Defines the different AI personality types available
+// lib/core/enums/ai_personality.dart
+
+/// Defines the AI personality modes available in the app
 enum AIPersonality {
-  /// Professional teacher mode - patient, encouraging, educational
+  /// Professional teacher mode - patient, pedagogical, structured
   tutor,
   
-  /// Friendly study buddy mode - casual, relatable, collaborative
+  /// Friendly peer mode - casual, collaborative, encouraging
   classmate,
 }
 
-/// Extension methods for AIPersonality enum
 extension AIPersonalityExtension on AIPersonality {
-  /// Returns display name for the personality
+  /// Get user-friendly name
   String get displayName {
     switch (this) {
       case AIPersonality.tutor:
@@ -19,7 +20,7 @@ extension AIPersonalityExtension on AIPersonality {
     }
   }
   
-  /// Returns emoji icon for the personality
+  /// Get emoji icon
   String get icon {
     switch (this) {
       case AIPersonality.tutor:
@@ -29,23 +30,23 @@ extension AIPersonalityExtension on AIPersonality {
     }
   }
   
-  /// Returns short description of the personality
+  /// Get description
   String get description {
     switch (this) {
       case AIPersonality.tutor:
-        return 'Your patient AI teacher who guides you through learning with encouragement and expertise.';
+        return 'Professional guidance and structured learning';
       case AIPersonality.classmate:
-        return 'Your friendly study buddy who learns alongside you in a casual, relatable way.';
+        return 'Casual conversation and peer collaboration';
     }
   }
   
-  /// Returns welcome message for the personality
-  String get welcomeMessage {
+  /// Get theme color
+  String get colorHex {
     switch (this) {
       case AIPersonality.tutor:
-        return 'Hello! I\'m your AI Tutor. I\'m here to help you learn and grow. What would you like to explore today? 😊';
+        return '#1976D2'; // Blue
       case AIPersonality.classmate:
-        return 'Hey! I\'m your study buddy! Let\'s learn together. What are we tackling today? 😄';
+        return '#388E3C'; // Green
     }
   }
 }

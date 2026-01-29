@@ -1,12 +1,16 @@
+// lib/presentation/screens/ai_chat_screen.dart
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../core/services/ai_service.dart';
 import '../../core/enums/ai_personality.dart';
+import '../../core/constants/app_constants.dart';
 import '../../data/models/chat_message.dart';
+import '../providers/session_provider.dart';
 
-/// Main chat interface for interacting with AI Tutor/Classmate
 class AIChatScreen extends StatefulWidget {
-  const AIChatScreen({Key? key}) : super(key: key);
+  const AIChatScreen({super.key});
 
   @override
   State<AIChatScreen> createState() => _AIChatScreenState();
@@ -15,7 +19,9 @@ class AIChatScreen extends StatefulWidget {
 class _AIChatScreenState extends State<AIChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _focusNode = FocusNode();
   bool _isInitialized = false;
+  bool _hasStartedSession = false;
 
   @override
   void initState() {
@@ -23,70 +29,88 @@ class _AIChatScreenState extends State<AIChatScreen> {
     _initializeAI();
   }
 
-  @override
-  void dispose() {
-    _messageController.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  // ==========================================
-  // INITIALIZATION
-  // ==========================================
-
   Future<void> _initializeAI() async {
-    final aiService = Provider.of<AIService>(context, listen: false);
-
-    try {
-      await aiService.initialize('YOUR_NEW_API_KEY_HERE');
+    final aiService = context.read<AIService>();
+    
+    if (!aiService.isInitialized) {
+      try {
+        await aiService.initialize();
+        
+        if (mounted) {
+          setState(() {
+            _isInitialized = true;
+          });
+          
+          // Show welcome message
+          _showWelcomeMessage();
+        }
+      } catch (e) {
+        if (mounted) {
+          _showErrorDialog(
+            'Initialization Error',
+            aiService.errorMessage.isNotEmpty 
+              ? aiService.errorMessage 
+              : 'Failed to initialize AI: $e',
+          );
+        }
+      }
+    } else {
       setState(() {
         _isInitialized = true;
       });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('AI ${aiService.currentPersonality.displayName} ready! 🎉'),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to initialize AI: ${e.toString()}'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
     }
   }
 
-  // ==========================================
-  // MESSAGE HANDLING
-  // ==========================================
+  void _showWelcomeMessage() {
+    final aiService = context.read<AIService>();
+    final welcomeMessage = aiService.currentPersonality == AIPersonality.tutor
+        ? "Hello! 👋 I'm your AI Tutor. I'm here to help you learn and understand any topic. What would you like to explore today?"
+        : "Hey there! 👋 Ready to learn something cool together? What should we study?";
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(welcomeMessage),
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
 
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-    final aiService = Provider.of<AIService>(context, listen: false);
+    // Start session if this is the first message
+    if (!_hasStartedSession) {
+      final sessionProvider = context.read<SessionProvider>();
+      sessionProvider.startNewSession(
+        'Chat Session - ${DateTime.now().toString().split(' ')[0]}',
+        'user_001', // You can replace this with actual user ID
+      );
+      _hasStartedSession = true;
+    }
 
-    // Clear input field immediately
     _messageController.clear();
+    _focusNode.requestFocus();
+
+    final aiService = context.read<AIService>();
+    final sessionProvider = context.read<SessionProvider>();
 
     try {
       await aiService.sendMessage(text);
+      
+      // Update session transcript
+      sessionProvider.updateSessionTranscript(aiService.conversationHistory);
+      
+      // Scroll to bottom
       _scrollToBottom();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error: ${e.toString()}'),
-            backgroundColor: Colors.red,
+            backgroundColor: AppConstants.errorColor,
+            duration: const Duration(seconds: 3),
           ),
         );
       }
@@ -94,69 +118,121 @@ class _AIChatScreenState extends State<AIChatScreen> {
   }
 
   void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    Future.delayed(const Duration(milliseconds: 100), () {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
+          duration: AppConstants.animationNormal,
           curve: Curves.easeOut,
         );
       }
     });
   }
 
-  // ==========================================
-  // PERSONALITY SWITCHING
-  // ==========================================
+  void _showErrorDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(
+          child: Text(message),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
 
-  Future<void> _showPersonalityMenu() async {
-    final aiService = Provider.of<AIService>(context, listen: false);
-    final currentPersonality = aiService.currentPersonality;
-
-    final result = await showDialog<AIPersonality>(
+  void _showPersonalityDialog() {
+    final aiService = context.read<AIService>();
+    
+    showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Choose AI Personality'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
-          children: AIPersonality.values.map((personality) {
-            final isSelected = personality == currentPersonality;
-            return ListTile(
-              leading: Text(personality.icon, style: const TextStyle(fontSize: 24)),
-              title: Text(personality.displayName),
-              subtitle: Text(personality.description),
-              selected: isSelected,
-              selectedTileColor: Colors.purple.withOpacity(0.1),
-              onTap: () => Navigator.pop(context, personality),
-            );
-          }).toList(),
+          children: [
+            _PersonalityOption(
+              personality: AIPersonality.tutor,
+              isSelected: aiService.currentPersonality == AIPersonality.tutor,
+              onTap: () {
+                Navigator.pop(context);
+                _switchPersonality(AIPersonality.tutor);
+              },
+            ),
+            const SizedBox(height: AppConstants.spacingM),
+            _PersonalityOption(
+              personality: AIPersonality.classmate,
+              isSelected: aiService.currentPersonality == AIPersonality.classmate,
+              onTap: () {
+                Navigator.pop(context);
+                _switchPersonality(AIPersonality.classmate);
+              },
+            ),
+          ],
         ),
       ),
     );
+  }
 
-    if (result != null && result != currentPersonality) {
-      await aiService.switchPersonality(result);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Switched to ${result.displayName} mode! ${result.icon}'),
-            backgroundColor: Colors.purple,
+  Future<void> _switchPersonality(AIPersonality personality) async {
+    final aiService = context.read<AIService>();
+    
+    if (aiService.currentPersonality == personality) return;
+    
+    // Confirm if there's an active conversation
+    if (aiService.hasConversation) {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Switch Personality?'),
+          content: const Text(
+            'Switching personality will clear the current conversation. Continue?',
           ),
-        );
-      }
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Switch'),
+            ),
+          ],
+        ),
+      );
+      
+      if (confirm != true) return;
+    }
+    
+    await aiService.switchPersonality(personality);
+    _hasStartedSession = false;
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Switched to ${personality.displayName} mode'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
     }
   }
 
-  // ==========================================
-  // CLEAR CONVERSATION
-  // ==========================================
-
-  Future<void> _showClearConfirmation() async {
-    final confirmed = await showDialog<bool>(
+  Future<void> _clearConversation() async {
+    final aiService = context.read<AIService>();
+    
+    if (!aiService.hasConversation) return;
+    
+    final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Clear Conversation?'),
-        content: const Text('This will delete all messages in this chat. This action cannot be undone.'),
+        content: const Text('This will delete all messages in the current conversation.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -164,193 +240,354 @@ class _AIChatScreenState extends State<AIChatScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Clear'),
+            child: const Text('Clear', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
     );
-
-    if (confirmed == true) {
-      final aiService = Provider.of<AIService>(context, listen: false);
+    
+    if (confirm == true) {
       await aiService.clearConversation();
+      _hasStartedSession = false;
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Conversation cleared'),
-            backgroundColor: Colors.orange,
-          ),
+          const SnackBar(content: Text('Conversation cleared')),
         );
       }
     }
   }
 
-  // ==========================================
-  // UI BUILD
-  // ==========================================
+  void _copyTranscript() {
+    final aiService = context.read<AIService>();
+    final transcript = aiService.getTranscript();
+    
+    Clipboard.setData(ClipboardData(text: transcript));
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Transcript copied to clipboard')),
+    );
+  }
+
+  @override
+  void dispose() {
+    _messageController.dispose();
+    _scrollController.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: _buildAppBar(),
-      body: _buildBody(),
-    );
-  }
-
-  AppBar _buildAppBar() {
-    return AppBar(
-      title: Consumer<AIService>(
-        builder: (context, aiService, child) {
-          return Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(aiService.currentPersonality.icon),
-              const SizedBox(width: 8),
-              Text('AI ${aiService.currentPersonality.displayName}'),
-            ],
-          );
-        },
-      ),
-      backgroundColor: Colors.purple,
-      foregroundColor: Colors.white,
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.swap_horiz),
-          onPressed: _showPersonalityMenu,
-          tooltip: 'Switch Personality',
+      appBar: AppBar(
+        title: Consumer<AIService>(
+          builder: (context, aiService, _) {
+            return Row(
+              children: [
+                Text(aiService.currentPersonality.icon),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${aiService.currentPersonality.displayName} Mode',
+                      style: const TextStyle(fontSize: 18),
+                    ),
+                    if (aiService.messageCount > 0)
+                      Text(
+                        '${aiService.messageCount} messages',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                  ],
+                ),
+              ],
+            );
+          },
         ),
-        IconButton(
-          icon: const Icon(Icons.delete_outline),
-          onPressed: _showClearConfirmation,
-          tooltip: 'Clear Chat',
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBody() {
-    if (!_isInitialized) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Initializing AI...'),
-          ],
-        ),
-      );
-    }
-
-    return Column(
-      children: [
-        Expanded(
-          child: Consumer<AIService>(
-            builder: (context, aiService, child) {
-              if (aiService.conversationHistory.isEmpty) {
-                return _buildWelcomeScreen(aiService);
-              }
-              return _buildMessageList(aiService);
+        backgroundColor: AppConstants.primaryColor,
+        foregroundColor: Colors.white,
+        elevation: 2,
+        actions: [
+          // Personality switch
+          IconButton(
+            icon: const Icon(Icons.swap_horiz),
+            onPressed: _showPersonalityDialog,
+            tooltip: 'Switch Personality',
+          ),
+          // Copy transcript
+          Consumer<AIService>(
+            builder: (context, aiService, _) {
+              return IconButton(
+                icon: const Icon(Icons.copy),
+                onPressed: aiService.hasConversation ? _copyTranscript : null,
+                tooltip: 'Copy Transcript',
+              );
             },
           ),
-        ),
-        _buildLoadingIndicator(),
-        _buildInputField(),
-      ],
-    );
-  }
-
-  Widget _buildWelcomeScreen(AIService aiService) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              aiService.currentPersonality.icon,
-              style: const TextStyle(fontSize: 80),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'AI ${aiService.currentPersonality.displayName}',
-              style: const TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
+          // Clear conversation
+          Consumer<AIService>(
+            builder: (context, aiService, _) {
+              return IconButton(
+                icon: const Icon(Icons.delete_outline),
+                onPressed: aiService.hasConversation ? _clearConversation : null,
+                tooltip: 'Clear Conversation',
+              );
+            },
+          ),
+          // More options
+          PopupMenuButton(
+            icon: const Icon(Icons.more_vert),
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'history',
+                child: Row(
+                  children: [
+                    Icon(Icons.history),
+                    SizedBox(width: 8),
+                    Text('View History'),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              aiService.currentPersonality.description,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.grey[600],
+              const PopupMenuItem(
+                value: 'settings',
+                child: Row(
+                  children: [
+                    Icon(Icons.settings),
+                    SizedBox(width: 8),
+                    Text('Settings'),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 32),
-            Text(
-              aiService.currentPersonality.welcomeMessage,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 18,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-            const SizedBox(height: 48),
-            const Text(
-              'Type a message below to start! 👇',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey,
-              ),
-            ),
-          ],
-        ),
+            ],
+            onSelected: (value) {
+              if (value == 'history') {
+                Navigator.pushNamed(context, '/history');
+              } else if (value == 'settings') {
+                // Navigate to settings (implement if needed)
+              }
+            },
+          ),
+        ],
       ),
+      body: !_isInitialized
+          ? const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Initializing AI...'),
+                ],
+              ),
+            )
+          : Column(
+              children: [
+                // Messages list
+                Expanded(
+                  child: Consumer<AIService>(
+                    builder: (context, aiService, _) {
+                      if (aiService.conversationHistory.isEmpty) {
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(32.0),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  aiService.currentPersonality.icon,
+                                  style: const TextStyle(fontSize: 64),
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'Welcome to ${aiService.currentPersonality.displayName} Mode!',
+                                  style: AppConstants.headingStyle,
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  aiService.currentPersonality.description,
+                                  style: AppConstants.bodyStyle.copyWith(
+                                    color: Colors.grey[600],
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 24),
+                                const Text(
+                                  'Start by saying Hi or ask me anything!',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontStyle: FontStyle.italic,
+                                    color: Colors.grey,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+
+                      return ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.all(AppConstants.spacingM),
+                        itemCount: aiService.conversationHistory.length,
+                        itemBuilder: (context, index) {
+                          final message = aiService.conversationHistory[index];
+                          return _MessageBubble(
+                            message: message,
+                            personality: aiService.currentPersonality,
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+
+                // Loading indicator
+                Consumer<AIService>(
+                  builder: (context, aiService, _) {
+                    if (aiService.isLoading) {
+                      return Container(
+                        padding: const EdgeInsets.all(AppConstants.spacingS),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '${aiService.currentPersonality.displayName} is thinking...',
+                              style: const TextStyle(
+                                color: Colors.grey,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  },
+                ),
+
+                // Input field
+                Container(
+                  padding: const EdgeInsets.all(AppConstants.spacingS),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.grey.shade300,
+                        blurRadius: 4,
+                        offset: const Offset(0, -2),
+                      ),
+                    ],
+                  ),
+                  child: SafeArea(
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _messageController,
+                            focusNode: _focusNode,
+                            decoration: InputDecoration(
+                              hintText: 'Type your message...',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(AppConstants.radiusL),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: AppConstants.spacingM,
+                                vertical: AppConstants.spacingS,
+                              ),
+                            ),
+                            maxLines: null,
+                            maxLength: AppConstants.maxMessageLength,
+                            textCapitalization: TextCapitalization.sentences,
+                            onSubmitted: (_) => _sendMessage(),
+                          ),
+                        ),
+                        const SizedBox(width: AppConstants.spacingS),
+                        Consumer<AIService>(
+                          builder: (context, aiService, _) {
+                            return FloatingActionButton(
+                              onPressed: aiService.isLoading ? null : _sendMessage,
+                              backgroundColor: aiService.isLoading 
+                                  ? Colors.grey 
+                                  : AppConstants.primaryColor,
+                              mini: true,
+                              child: const Icon(Icons.send, color: Colors.white),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
     );
   }
+}
 
-  Widget _buildMessageList(AIService aiService) {
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.all(16),
-      itemCount: aiService.conversationHistory.length,
-      itemBuilder: (context, index) {
-        final message = aiService.conversationHistory[index];
-        return _buildMessageBubble(message);
-      },
-    );
-  }
+// ========== Message Bubble Widget ==========
+class _MessageBubble extends StatelessWidget {
+  final ChatMessage message;
+  final AIPersonality personality;
 
-  Widget _buildMessageBubble(ChatMessage message) {
+  const _MessageBubble({
+    required this.message,
+    required this.personality,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     final isUser = message.isUser;
-
+    final isError = message.isError;
+    
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        margin: const EdgeInsets.only(bottom: AppConstants.spacingS),
+        padding: const EdgeInsets.all(AppConstants.spacingM),
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
         decoration: BoxDecoration(
-          color: isUser ? Colors.purple : Colors.grey[300],
-          borderRadius: BorderRadius.circular(20),
+          color: isError
+              ? AppConstants.errorColor.withOpacity(0.1)
+              : isUser
+                  ? AppConstants.primaryColor
+                  : personality == AIPersonality.tutor
+                      ? AppConstants.tutorLightColor
+                      : AppConstants.classmateLightColor,
+          borderRadius: BorderRadius.circular(AppConstants.radiusM),
+          border: isError
+              ? Border.all(color: AppConstants.errorColor, width: 1)
+              : null,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (!isUser && message.personality != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  message.personality!,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey[700],
-                  ),
+            if (isError)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    Icon(Icons.error_outline, size: 16, color: Colors.red),
+                    SizedBox(width: 4),
+                    Text(
+                      'Error',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.red,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             Text(
@@ -362,10 +599,10 @@ class _AIChatScreenState extends State<AIChatScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              message.formattedTime,
+              _formatTime(message.timestamp),
               style: TextStyle(
                 fontSize: 10,
-                color: isUser ? Colors.white70 : Colors.grey[600],
+                color: isUser ? Colors.white70 : Colors.black54,
               ),
             ),
           ],
@@ -374,86 +611,74 @@ class _AIChatScreenState extends State<AIChatScreen> {
     );
   }
 
-  Widget _buildLoadingIndicator() {
-    return Consumer<AIService>(
-      builder: (context, aiService, child) {
-        if (!aiService.isLoading) return const SizedBox.shrink();
-
-        return Container(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                '${aiService.currentPersonality.displayName} is typing...',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
+  String _formatTime(DateTime time) {
+    return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
   }
+}
 
-  Widget _buildInputField() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.2),
-            spreadRadius: 1,
-            blurRadius: 5,
-            offset: const Offset(0, -2),
+// ========== Personality Option Widget ==========
+class _PersonalityOption extends StatelessWidget {
+  final AIPersonality personality;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _PersonalityOption({
+    required this.personality,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppConstants.radiusM),
+      child: Container(
+        padding: const EdgeInsets.all(AppConstants.spacingM),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: isSelected ? AppConstants.primaryColor : Colors.grey,
+            width: isSelected ? 2 : 1,
           ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _messageController,
-              decoration: InputDecoration(
-                hintText: 'Type your message...',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(25),
-                  borderSide: BorderSide(color: Colors.grey[300]!),
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 12,
-                ),
-              ),
-              maxLines: null,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => _sendMessage(),
+          borderRadius: BorderRadius.circular(AppConstants.radiusM),
+          color: isSelected ? AppConstants.primaryColor.withOpacity(0.1) : null,
+        ),
+        child: Row(
+          children: [
+            Text(
+              personality.icon,
+              style: const TextStyle(fontSize: 32),
             ),
-          ),
-          const SizedBox(width: 12),
-          Consumer<AIService>(
-            builder: (context, aiService, child) {
-              return Container(
-                decoration: const BoxDecoration(
-                  color: Colors.purple,
-                  shape: BoxShape.circle,
-                ),
-                child: IconButton(
-                  icon: const Icon(Icons.send, color: Colors.white),
-                  onPressed: aiService.isLoading ? null : _sendMessage,
-                ),
-              );
-            },
-          ),
-        ],
+            const SizedBox(width: AppConstants.spacingM),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    personality.displayName,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    personality.description,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isSelected)
+              const Icon(
+                Icons.check_circle,
+                color: AppConstants.primaryColor,
+              ),
+          ],
+        ),
       ),
     );
   }

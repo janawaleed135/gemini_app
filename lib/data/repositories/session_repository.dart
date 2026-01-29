@@ -1,68 +1,91 @@
+// lib/data/repositories/session_repository.dart
+
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import '../models/session_model.dart';
+import '../../core/constants/app_constants.dart';
 
-/// Simple repository for persisting SessionModel using SharedPreferences
+/// Repository for managing session persistence
 class SessionRepository {
-  static const _kSessionsKey = 'saved_sessions';
+  final SharedPreferences _prefs;
 
-  // ==========================================
-  // SAVE SESSIONS
-  // ==========================================
+  SessionRepository(this._prefs);
 
+  /// Save a session
   Future<void> saveSession(SessionModel session) async {
-    final prefs = await SharedPreferences.getInstance();
     final sessions = await getAllSessions();
-
-    final index = sessions.indexWhere((s) => s.id == session.id);
-    if (index >= 0) {
-      sessions[index] = session;
-    } else {
-      sessions.add(session);
+    
+    // Remove existing session with same ID if exists
+    sessions.removeWhere((s) => s.id == session.id);
+    
+    // Add new session
+    sessions.add(session);
+    
+    // Sort by date (newest first)
+    sessions.sort((a, b) => b.startTime.compareTo(a.startTime));
+    
+    // Limit to max history
+    if (sessions.length > AppConstants.maxConversationHistory) {
+      sessions.removeRange(AppConstants.maxConversationHistory, sessions.length);
     }
-
-    final encoded = json.encode(sessions.map((s) => s.toJson()).toList());
-    await prefs.setString(_kSessionsKey, encoded);
+    
+    // Save to preferences
+    final jsonList = sessions.map((s) => s.toJson()).toList();
+    await _prefs.setString(AppConstants.sessionsKey, jsonEncode(jsonList));
   }
 
-  // ==========================================
-  // RETRIEVE SESSIONS
-  // ==========================================
-
+  /// Get all sessions
   Future<List<SessionModel>> getAllSessions() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_kSessionsKey);
-    if (raw == null || raw.isEmpty) return [];
-
+    final jsonString = _prefs.getString(AppConstants.sessionsKey);
+    
+    if (jsonString == null || jsonString.isEmpty) {
+      return [];
+    }
+    
     try {
-      final list = json.decode(raw) as List<dynamic>;
-      return list
-          .map((e) => SessionModel.fromJson(Map<String, dynamic>.from(e)))
+      final jsonList = jsonDecode(jsonString) as List;
+      return jsonList
+          .map((json) => SessionModel.fromJson(json as Map<String, dynamic>))
           .toList();
-    } catch (_) {
+    } catch (e) {
+      print('Error loading sessions: $e');
       return [];
     }
   }
 
-  Future<SessionModel?> getSessionById(String sessionId) async {
+  /// Get a specific session by ID
+  Future<SessionModel?> getSession(String id) async {
     final sessions = await getAllSessions();
-    for (final s in sessions) {
-      if (s.id == sessionId) return s;
+    try {
+      return sessions.firstWhere((s) => s.id == id);
+    } catch (e) {
+      return null;
     }
-    return null;
   }
 
-  // ==========================================
-  // DELETE SESSIONS
-  // ==========================================
-
-  Future<void> deleteSession(String sessionId) async {
-    final prefs = await SharedPreferences.getInstance();
+  /// Delete a session
+  Future<void> deleteSession(String id) async {
     final sessions = await getAllSessions();
-    sessions.removeWhere((s) => s.id == sessionId);
-    final encoded = json.encode(sessions.map((s) => s.toJson()).toList());
-    await prefs.setString(_kSessionsKey, encoded);
+    sessions.removeWhere((s) => s.id == id);
+    
+    final jsonList = sessions.map((s) => s.toJson()).toList();
+    await _prefs.setString(AppConstants.sessionsKey, jsonEncode(jsonList));
   }
 
+  /// Clear all sessions
+  Future<void> clearAllSessions() async {
+    await _prefs.remove(AppConstants.sessionsKey);
+  }
+
+  /// Get sessions by personality
+  Future<List<SessionModel>> getSessionsByPersonality(String personality) async {
+    final sessions = await getAllSessions();
+    return sessions.where((s) => s.personalityUsed == personality).toList();
+  }
+
+  /// Get recent sessions (last N)
+  Future<List<SessionModel>> getRecentSessions(int count) async {
+    final sessions = await getAllSessions();
+    return sessions.take(count).toList();
+  }
 }
