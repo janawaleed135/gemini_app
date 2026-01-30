@@ -93,6 +93,12 @@ class ChatMessage {
     );
   }
 
+  /// Get the message content (alias for 'content')
+  String get message => content;
+
+  /// Get the sender of the message
+  String get sender => isUser ? 'User' : (personality ?? 'AI');
+
   @override
   String toString() {
     final speaker = isUser ? 'User' : (personality ?? 'AI');

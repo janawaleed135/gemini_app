@@ -167,4 +167,17 @@ REMEMBER:
       "Hey there! What should we study today?",
     ];
   }
+
+  // Welcome messages for each personality
+  static const String tutorWelcomeMessage = '''Hi! I'm your AI tutor, and I'm excited to help you learn! 📚
+
+Feel free to ask me anything - whether it's about concepts from your slides, homework questions, or topics you want to explore deeper. I'm here to guide you through the learning process and help things click.
+
+What would you like to work on today?''';
+
+  static const String classmateWelcomeMessage = '''Hey! 👋 What's up? I'm your study buddy, and we're gonna figure things out together!
+
+Whether you're confused about something from class, want to talk through a tough concept, or just need to bounce ideas around - I'm here for it. Let's make learning less lonely and way more fun.
+
+What do you wanna tackle?''';
 }

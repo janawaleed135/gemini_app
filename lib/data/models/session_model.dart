@@ -107,4 +107,26 @@ class SessionModel {
       personalityUsed: json['personalityUsed'] as String,
     );
   }
+
+  /// Create a SessionModel from an AIService instance
+  factory SessionModel.fromAIService({
+    required String id,
+    required DateTime startTime,
+    required DateTime? endTime,
+    required dynamic personality,
+    required List<ChatMessage> messages,
+    required List<String> topics,
+    required int slideCount,
+    required String userId,
+  }) {
+    return SessionModel(
+      id: id,
+      topic: topics.isNotEmpty ? topics.join(', ') : 'Study Session',
+      startTime: startTime,
+      endTime: endTime,
+      transcript: messages,
+      userId: userId,
+      personalityUsed: personality.toString(),
+    );
+  }
 }

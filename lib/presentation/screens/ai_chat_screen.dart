@@ -48,9 +48,7 @@ class _AIChatScreenState extends State<AIChatScreen> {
         if (mounted) {
           _showErrorDialog(
             'Initialization Error',
-            aiService.errorMessage.isNotEmpty 
-              ? aiService.errorMessage 
-              : 'Failed to initialize AI: $e',
+            aiService.errorMessage ?? 'Failed to initialize AI: $e',
           );
         }
       }
@@ -558,7 +556,7 @@ class _MessageBubble extends StatelessWidget {
         ),
         decoration: BoxDecoration(
           color: isError
-              ? AppConstants.errorColor.withOpacity(0.1)
+              ? AppConstants.errorColor.withValues(alpha: 0.1)
               : isUser
                   ? AppConstants.primaryColor
                   : personality == AIPersonality.tutor
@@ -641,7 +639,7 @@ class _PersonalityOption extends StatelessWidget {
             width: isSelected ? 2 : 1,
           ),
           borderRadius: BorderRadius.circular(AppConstants.radiusM),
-          color: isSelected ? AppConstants.primaryColor.withOpacity(0.1) : null,
+          color: isSelected ? AppConstants.primaryColor.withValues(alpha: 0.1) : null,
         ),
         child: Row(
           children: [

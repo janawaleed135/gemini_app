@@ -85,12 +85,10 @@ class _SlideViewerScreenState extends State<SlideViewerScreen> {
     setState(() => _isAnalyzing = true);
     
     try {
-      final metadata = await aiService.analyzeSlide(
-        currentSlide.imageBytes!,
-        slideService.currentSlideIndex,
-      );
+      final analysis = await aiService.analyzeSlide(slideService.currentSlideModel!);
       
-      slideService.updateSlideMetadata(slideService.currentSlideIndex, metadata);
+      // Cache the analysis in the AI service
+      // Note: updateSlideMetadata is handled internally by analyzeSlide
       _updateAIContext();
       
       if (mounted) {
@@ -122,11 +120,7 @@ class _SlideViewerScreenState extends State<SlideViewerScreen> {
     final aiService = context.read<AIService>();
     
     if (slideService.hasSlides) {
-      aiService.setSlideContext(
-        slideService.currentSlide,
-        slideService.currentSlideIndex,
-        slideService.totalSlides,
-      );
+      aiService.setCurrentSlide(slideService.currentSlideIndex);
     }
   }
 
@@ -148,12 +142,9 @@ class _SlideViewerScreenState extends State<SlideViewerScreen> {
     
     try {
       // Get current slide image for Vision API
-      Uint8List? slideImage;
-      if (slideService.hasSlides && slideService.currentSlide?.imageBytes != null) {
-        slideImage = slideService.currentSlide!.imageBytes;
-      }
+      final slideModel = slideService.currentSlideModel;
       
-      await aiService.sendSlideAwareMessage(text, slideImage);
+      await aiService.sendMessage(text);
       _scrollChatToBottom();
     } catch (e) {
       if (mounted) {

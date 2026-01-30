@@ -52,6 +52,20 @@ class SlideModel {
     if (fileSizeBytes < 1024 * 1024) return '${(fileSizeBytes / 1024).toStringAsFixed(1)} KB';
     return '${(fileSizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
+
+  /// Get the title of the slide deck (from fileName)
+  String get title => fileName;
+
+  /// Check if slide has a title
+  bool get hasTitle => fileName.isNotEmpty;
+
+  /// Get image bytes from the first slide if available
+  Uint8List? get imageBytes {
+    if (slides.isNotEmpty && slides[0].imageBytes != null) {
+      return slides[0].imageBytes;
+    }
+    return null;
+  }
 }
 
 /// Individual slide data

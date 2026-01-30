@@ -1,15 +1,18 @@
 // lib/core/config/api_config.dart
 
+import '../services/firebase_service.dart';
+
 /// Central configuration for API keys and app settings
 class ApiConfig {
-  ApiConfig._(); // Private constructor to prevent instantiation
+  ApiConfig._(); 
 
   // ========== API Keys ==========
-  /// Gemini AI API Key
-  static const String geminiApiKey = 'AIzaSyBF6f5CFVuAvviKurs9pDd-vdewQyEnZac';
+  /// Get Gemini API Key from Firebase Remote Config
+  static String get geminiApiKey {
+    return FirebaseService.instance.apiKey;
+  }
 
   // ========== Model Configuration ==========
-  /// Use gemini-pro - works 100% with any valid API key
   static const String geminiModel = 'gemini-2.5-flash';
 
   // ========== Generation Settings ==========
@@ -30,21 +33,19 @@ class ApiConfig {
 
   // ========== Validation ==========
   static bool get isApiKeyConfigured {
-    return geminiApiKey.isNotEmpty && 
-           geminiApiKey.length > 20 &&
-           geminiApiKey.startsWith('AIza');
+    final key = geminiApiKey;
+    return key.isNotEmpty && 
+           key.length > 20 &&
+           key.startsWith('AIza');
   }
 
   static String get apiKeyErrorMessage => 
     '''
-API key not configured properly!
+API key not available!
 
-Steps to fix:
-1. Go to https://aistudio.google.com/app/apikey
-2. Create a new API key
-3. Copy the key
-4. Open lib/core/config/api_config.dart
-5. Replace the geminiApiKey value with your key
-6. Restart the app
+The app is trying to load the API key from Firebase Remote Config.
+Please check your internet connection and try again.
+
+If the problem persists, contact support.
 ''';
 }

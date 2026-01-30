@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'core/services/firebase_service.dart'; // ADD THIS
 import 'core/services/voice_service.dart';
 import 'core/services/ai_service.dart';
 import 'core/services/slide_service.dart';
@@ -16,11 +17,15 @@ import 'presentation/screens/slide_viewer_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
+  // Initialize Firebase FIRST
+  await FirebaseService.instance.initialize();
+  
   // Initialize SharedPreferences
   final prefs = await SharedPreferences.getInstance();
   
   runApp(MyApp(prefs: prefs));
 }
+
 
 class MyApp extends StatelessWidget {
   final SharedPreferences prefs;
