@@ -1,11 +1,13 @@
 // lib/core/services/ai_service.dart
 
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import '../enums/ai_personality.dart';
 import '../constants/ai_prompts.dart';
 import '../config/api_config.dart';
 import '../../data/models/chat_message.dart';
+import '../../data/models/slide_model.dart';
 
 /// Service for managing AI chat interactions with Gemini
 /// Enhanced with context memory and conversation tracking
@@ -23,6 +25,11 @@ class AIService extends ChangeNotifier {
   final List<String> _sessionTopics = [];
   String _currentSessionContext = '';
   
+  // Slide context - tracks current slide for context-aware responses
+  SlideData? _currentSlideContext;
+  int _currentSlideNumber = 0;
+  int _totalSlides = 0;
+  
   // ========== Getters ==========
   AIPersonality get currentPersonality => _currentPersonality;
   List<ChatMessage> get conversationHistory => List.unmodifiable(_conversationHistory);
@@ -31,6 +38,9 @@ class AIService extends ChangeNotifier {
   bool get hasError => _errorMessage.isNotEmpty;
   bool get isInitialized => _isInitialized;
   List<String> get sessionTopics => List.unmodifiable(_sessionTopics);
+  SlideData? get currentSlideContext => _currentSlideContext;
+  int get currentSlideNumber => _currentSlideNumber;
+  bool get hasSlideContext => _currentSlideContext != null;
   
   // ========== Auto-Initialize ==========
   /// Automatically initialize with built-in API key
@@ -355,11 +365,263 @@ class AIService extends ChangeNotifier {
     notifyListeners();
   }
   
+  // ========== Slide Context Management ==========
+  /// Set the current slide context for slide-aware responses
+  void setSlideContext(SlideData? slide, int slideNumber, int totalSlides) {
+    _currentSlideContext = slide;
+    _currentSlideNumber = slideNumber;
+    _totalSlides = totalSlides;
+    notifyListeners();
+    
+    if (kDebugMode) {
+      print('📊 Slide context set: Slide ${slideNumber + 1}/$totalSlides');
+    }
+  }
+  
+  /// Clear the current slide context
+  void clearSlideContext() {
+    _currentSlideContext = null;
+    _currentSlideNumber = 0;
+    _totalSlides = 0;
+    notifyListeners();
+  }
+  
+  /// Build slide context for AI prompts
+  String _buildSlideContext() {
+    if (_currentSlideContext == null) return '';
+    
+    final buffer = StringBuffer();
+    buffer.writeln('\n[CURRENT SLIDE CONTEXT - Slide ${_currentSlideNumber + 1} of $_totalSlides]:');
+    
+    if (_currentSlideContext!.metadata != null) {
+      buffer.writeln(_currentSlideContext!.metadata!.toContextString());
+    } else {
+      buffer.writeln('(Slide image is being displayed to the student)');
+    }
+    
+    buffer.writeln('[Provide explanations that relate to this specific slide content]');
+    return buffer.toString();
+  }
+  
+  // ========== Vision API - Analyze Slide ==========
+  /// Analyze a slide image using Vision AI and return structured metadata
+  Future<SlideMetadata> analyzeSlide(Uint8List imageBytes, int slideNumber) async {
+    if (!_isInitialized) {
+      await autoInitialize();
+    }
+    
+    if (_model == null) {
+      throw Exception('AI model not initialized');
+    }
+    
+    _isLoading = true;
+    notifyListeners();
+    
+    try {
+      if (kDebugMode) {
+        print('🔍 Analyzing slide ${slideNumber + 1}...');
+      }
+      
+      // Create the prompt for slide analysis
+      final analysisPrompt = '''
+You are an educational AI assistant analyzing a lecture slide. Please analyze this slide image and provide:
+
+1. EXTRACTED_TEXT: All visible text on the slide
+2. KEY_CONCEPTS: List the main concepts/topics (comma-separated)
+3. DIAGRAM_DESCRIPTION: If there are diagrams, charts, or graphs, describe them
+4. FORMULA_EXPLANATION: If there are formulas or equations, explain them
+5. EDUCATIONAL_SUMMARY: A brief educational summary of what this slide teaches
+6. SUGGESTED_QUESTIONS: 3 questions a student might ask about this slide
+
+Format your response exactly as:
+EXTRACTED_TEXT: [text]
+KEY_CONCEPTS: [concept1, concept2, ...]
+DIAGRAM_DESCRIPTION: [description or "None"]
+FORMULA_EXPLANATION: [explanation or "None"]
+EDUCATIONAL_SUMMARY: [summary]
+SUGGESTED_QUESTIONS: [question1 | question2 | question3]
+''';
+      
+      // Send image to Vision API
+      final content = Content.multi([
+        TextPart(analysisPrompt),
+        DataPart('image/png', imageBytes),
+      ]);
+      
+      final response = await _model!.generateContent([content]);
+      final responseText = response.text ?? '';
+      
+      if (kDebugMode) {
+        print('📝 Slide analysis response received');
+      }
+      
+      // Parse the response
+      final metadata = _parseSlideAnalysis(responseText);
+      
+      _isLoading = false;
+      notifyListeners();
+      
+      return metadata;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = 'Failed to analyze slide: $e';
+      notifyListeners();
+      
+      if (kDebugMode) {
+        print('❌ Slide analysis error: $e');
+      }
+      
+      // Return default metadata on error
+      return SlideMetadata(
+        extractedText: 'Unable to extract text',
+        keyConcepts: [],
+        educationalSummary: 'Analysis failed',
+        suggestedQuestions: [],
+        analyzedAt: DateTime.now(),
+      );
+    }
+  }
+  
+  /// Parse the AI response into structured SlideMetadata
+  SlideMetadata _parseSlideAnalysis(String response) {
+    String extractedText = '';
+    List<String> keyConcepts = [];
+    String? diagramDescription;
+    String? formulaExplanation;
+    String educationalSummary = '';
+    List<String> suggestedQuestions = [];
+    
+    final lines = response.split('\n');
+    
+    for (var line in lines) {
+      line = line.trim();
+      
+      if (line.startsWith('EXTRACTED_TEXT:')) {
+        extractedText = line.substring('EXTRACTED_TEXT:'.length).trim();
+      } else if (line.startsWith('KEY_CONCEPTS:')) {
+        final conceptsStr = line.substring('KEY_CONCEPTS:'.length).trim();
+        keyConcepts = conceptsStr.split(',').map((c) => c.trim()).where((c) => c.isNotEmpty).toList();
+      } else if (line.startsWith('DIAGRAM_DESCRIPTION:')) {
+        final desc = line.substring('DIAGRAM_DESCRIPTION:'.length).trim();
+        diagramDescription = desc.toLowerCase() == 'none' ? null : desc;
+      } else if (line.startsWith('FORMULA_EXPLANATION:')) {
+        final exp = line.substring('FORMULA_EXPLANATION:'.length).trim();
+        formulaExplanation = exp.toLowerCase() == 'none' ? null : exp;
+      } else if (line.startsWith('EDUCATIONAL_SUMMARY:')) {
+        educationalSummary = line.substring('EDUCATIONAL_SUMMARY:'.length).trim();
+      } else if (line.startsWith('SUGGESTED_QUESTIONS:')) {
+        final questionsStr = line.substring('SUGGESTED_QUESTIONS:'.length).trim();
+        suggestedQuestions = questionsStr.split('|').map((q) => q.trim()).where((q) => q.isNotEmpty).toList();
+      }
+    }
+    
+    return SlideMetadata(
+      extractedText: extractedText.isEmpty ? response : extractedText,
+      keyConcepts: keyConcepts,
+      diagramDescription: diagramDescription,
+      formulaExplanation: formulaExplanation,
+      educationalSummary: educationalSummary.isEmpty ? 'Slide content analyzed' : educationalSummary,
+      suggestedQuestions: suggestedQuestions,
+      analyzedAt: DateTime.now(),
+    );
+  }
+  
+  // ========== Slide-Aware Message ==========
+  /// Send a message with slide context for slide-aware responses
+  Future<String> sendSlideAwareMessage(String userMessage, Uint8List? slideImage) async {
+    if (!_isInitialized) {
+      await autoInitialize();
+    }
+    
+    if (_model == null) {
+      throw Exception('AI model not initialized');
+    }
+    
+    _isLoading = true;
+    _errorMessage = '';
+    notifyListeners();
+    
+    try {
+      // Add user message to history
+      final userChatMessage = ChatMessage.user(userMessage);
+      _conversationHistory.add(userChatMessage);
+      notifyListeners();
+      
+      if (kDebugMode) {
+        print('📤 User (slide-aware): $userMessage');
+      }
+      
+      // Build context
+      String contextualMessage = '';
+      if (_conversationHistory.length > 1) {
+        contextualMessage = _buildContextSummary();
+      }
+      contextualMessage += _buildSlideContext();
+      contextualMessage += '\n\nStudent: $userMessage';
+      
+      String aiResponse;
+      
+      // If we have a slide image, use Vision API
+      if (slideImage != null) {
+        final content = Content.multi([
+          TextPart(contextualMessage),
+          DataPart('image/png', slideImage),
+        ]);
+        
+        final response = await _model!.generateContent([content]);
+        aiResponse = response.text ?? 'I could not generate a response. Please try again.';
+      } else {
+        // Use regular chat session
+        final response = await _chatSession!.sendMessage(
+          Content.text(contextualMessage),
+        );
+        aiResponse = response.text ?? 'I could not generate a response. Please try again.';
+      }
+      
+      if (kDebugMode) {
+        print('📥 AI (slide-aware): $aiResponse');
+      }
+      
+      // Update session topics
+      _updateSessionTopics(userMessage, aiResponse);
+      
+      // Add AI message to history
+      final aiChatMessage = ChatMessage.ai(
+        aiResponse,
+        _currentPersonality.displayName,
+      );
+      _conversationHistory.add(aiChatMessage);
+      
+      _isLoading = false;
+      notifyListeners();
+      
+      return aiResponse;
+    } catch (e) {
+      _errorMessage = 'Failed to get response: $e';
+      _isLoading = false;
+      notifyListeners();
+      
+      if (kDebugMode) {
+        print('❌ Slide-aware message error: $e');
+      }
+      
+      final errorChatMessage = ChatMessage.ai(
+        'Sorry, I encountered an error. Please try again.',
+        _currentPersonality.displayName,
+      );
+      _conversationHistory.add(errorChatMessage);
+      notifyListeners();
+      
+      rethrow;
+    }
+  }
+  
   // ========== Dispose ==========
   @override
   void dispose() {
     _chatSession = null;
     _model = null;
+    _currentSlideContext = null;
     super.dispose();
   }
 }

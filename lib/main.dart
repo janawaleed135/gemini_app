@@ -5,11 +5,13 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/services/voice_service.dart';
 import 'core/services/ai_service.dart';
+import 'core/services/slide_service.dart';
 import 'data/repositories/session_repository.dart';
 import 'presentation/providers/session_provider.dart';
 import 'presentation/screens/voice_test_screen.dart';
 import 'presentation/screens/ai_chat_screen.dart';
 import 'presentation/screens/session_history_screen.dart';
+import 'presentation/screens/slide_viewer_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,6 +34,7 @@ class MyApp extends StatelessWidget {
         // Services
         ChangeNotifierProvider(create: (_) => VoiceService()),
         ChangeNotifierProvider(create: (_) => AIService()),
+        ChangeNotifierProvider(create: (_) => SlideService()),
         
         // Repository
         Provider<SessionRepository>(
@@ -178,7 +181,25 @@ class HomeScreen extends StatelessWidget {
                 
                 const SizedBox(height: 16),
                 
-                // Branch 3: Session History
+                // Branch 3: Slide Learning - NEW
+                _MenuButton(
+                  icon: Icons.slideshow,
+                  label: 'Slide Learning',
+                  subtitle: 'Upload slides & learn',
+                  color: Colors.orange,
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const SlideViewerScreen(),
+                      ),
+                    );
+                  },
+                ),
+                
+                const SizedBox(height: 16),
+                
+                // Branch 4: Session History
                 _MenuButton(
                   icon: Icons.history,
                   label: 'Session History',
