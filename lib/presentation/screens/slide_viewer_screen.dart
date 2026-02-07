@@ -1,17 +1,12 @@
 // lib/presentation/screens/slide_viewer_screen.dart
 
-import 'dart:typed_data';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import '../../core/services/slide_service.dart';
 import '../../core/services/ai_service.dart';
-import '../../core/constants/app_constants.dart';
-import '../../data/models/chat_message.dart';
-import '../../data/models/slide_model.dart';
-import '../providers/session_provider.dart';
+import '../../core/services/notes_service.dart';
 
 class SlideViewerScreen extends StatefulWidget {
   const SlideViewerScreen({super.key});
@@ -22,112 +17,68 @@ class SlideViewerScreen extends StatefulWidget {
 
 class _SlideViewerScreenState extends State<SlideViewerScreen> {
   final TextEditingController _messageController = TextEditingController();
+  final TextEditingController _noteController = TextEditingController();
   final ScrollController _chatScrollController = ScrollController();
-  final FocusNode _focusNode = FocusNode();
+  final FocusNode _messageFocusNode = FocusNode();
+  final FocusNode _noteFocusNode = FocusNode();
+  
   bool _showChat = true;
-  bool _isAnalyzing = false;
+  bool _showNotesPanel = false;
   double _zoomLevel = 1.0;
 
   @override
   void initState() {
     super.initState();
-    _initializeServices();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<AIService>().initialize();
+    });
   }
 
-  Future<void> _initializeServices() async {
-    final aiService = context.read<AIService>();
-    if (!aiService.isInitialized) {
-      await aiService.initialize();
-    }
+  @override
+  void dispose() {
+    _messageController.dispose();
+    _noteController.dispose();
+    _chatScrollController.dispose();
+    _messageFocusNode.dispose();
+    _noteFocusNode.dispose();
+    super.dispose();
   }
 
   Future<void> _pickAndLoadFile() async {
     final slideService = context.read<SlideService>();
-    
-    final file = await slideService.pickFile();
-    if (file != null) {
-      final success = await slideService.loadSlideFile(file);
-      if (success && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Loaded ${slideService.totalSlides} slides'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        // Analyze the first slide automatically
-        _analyzeCurrentSlide();
-      } else if (!success && slideService.hasError) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(slideService.errorMessage),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _analyzeCurrentSlide() async {
-    final slideService = context.read<SlideService>();
     final aiService = context.read<AIService>();
+    final notesService = context.read<NotesService>();
     
-    if (!slideService.hasSlides) return;
+    // 1. Pick File
+    final success = await slideService.pickFile();
     
-    final currentSlide = slideService.currentSlide;
-    if (currentSlide == null || currentSlide.imageBytes == null) return;
-    
-    // Skip if already analyzed
-    if (currentSlide.isAnalyzed) {
-      _updateAIContext();
-      return;
-    }
-    
-    setState(() => _isAnalyzing = true);
-    
-    try {
-      final analysis = await aiService.analyzeSlide(slideService.currentSlideModel!);
-      
-      // Cache the analysis in the AI service
-      // Note: updateSlideMetadata is handled internally by analyzeSlide
-      _updateAIContext();
+    // 2. Load into AI if successful
+    if (success && slideService.rawFileBytes != null) {
+      // Set current document for notes
+      final docId = slideService.currentSlideModel!.id;
+      notesService.setCurrentDocument(docId);
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Slide analyzed successfully'),
-            duration: Duration(seconds: 1),
+            content: Text('📚 Analyzing document... This may take a moment.'),
+            backgroundColor: Colors.deepPurple,
+            duration: Duration(seconds: 3),
           ),
         );
       }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Analysis failed: $e'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isAnalyzing = false);
-      }
-    }
-  }
 
-  void _updateAIContext() {
-    final slideService = context.read<SlideService>();
-    final aiService = context.read<AIService>();
-    
-    if (slideService.hasSlides) {
-      aiService.setCurrentSlide(slideService.currentSlideIndex);
+      await aiService.loadDocument(
+        slideService.currentSlideModel!.fileName,
+        slideService.rawFileBytes!,
+        'application/pdf', 
+      );
+      
+      // Show notes panel after loading
+      setState(() {
+        _showNotesPanel = true;
+      });
     }
-  }
-
-  void _onSlideChanged(int newIndex) {
-    final slideService = context.read<SlideService>();
-    slideService.goToSlide(newIndex);
-    _analyzeCurrentSlide();
   }
 
   Future<void> _sendMessage() async {
@@ -135,27 +86,16 @@ class _SlideViewerScreenState extends State<SlideViewerScreen> {
     if (text.isEmpty) return;
     
     _messageController.clear();
-    _focusNode.requestFocus();
     
     final aiService = context.read<AIService>();
     final slideService = context.read<SlideService>();
     
-    try {
-      // Get current slide image for Vision API
-      final slideModel = slideService.currentSlideModel;
-      
-      await aiService.sendMessage(text);
-      _scrollChatToBottom();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
+    await aiService.sendMessage(
+      text, 
+      currentPage: slideService.currentSlideIndex
+    );
+    
+    _scrollChatToBottom();
   }
 
   void _scrollChatToBottom() {
@@ -170,132 +110,118 @@ class _SlideViewerScreenState extends State<SlideViewerScreen> {
     });
   }
 
-  void _sendQuickAction(String action) {
-    _messageController.text = action;
-    _sendMessage();
+  void _loadNoteForCurrentSlide() {
+    final slideService = context.read<SlideService>();
+    final notesService = context.read<NotesService>();
+    
+    final note = notesService.getNoteForSlide(slideService.currentSlideIndex);
+    _noteController.text = note ?? '';
   }
 
-  @override
-  void dispose() {
-    _messageController.dispose();
-    _chatScrollController.dispose();
-    _focusNode.dispose();
-    super.dispose();
+  Future<void> _saveNoteForCurrentSlide() async {
+    final slideService = context.read<SlideService>();
+    final notesService = context.read<NotesService>();
+    
+    await notesService.saveNoteForSlide(
+      slideService.currentSlideIndex,
+      _noteController.text,
+    );
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Note saved!'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: _buildAppBar(),
-      body: _buildBody(),
-    );
-  }
-
-  PreferredSizeWidget _buildAppBar() {
-    return AppBar(
-      title: Consumer<SlideService>(
+      appBar: AppBar(
+        title: Consumer<SlideService>(
+          builder: (context, slideService, _) {
+            if (slideService.hasSlides) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(slideService.currentSlideModel!.fileName, style: const TextStyle(fontSize: 16)),
+                  Text(
+                    'Page ${slideService.currentSlideIndex + 1} of ${slideService.totalSlides}',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+                  ),
+                ],
+              );
+            }
+            return const Text('Slide Learning');
+          },
+        ),
+        backgroundColor: Colors.deepPurple,
+        foregroundColor: Colors.white,
+        actions: [
+          // Notes panel toggle
+          Consumer<NotesService>(
+            builder: (context, notesService, _) {
+              final notesCount = notesService.getNotesCount();
+              return Stack(
+                children: [
+                  IconButton(
+                    icon: Icon(_showNotesPanel ? Icons.note : Icons.note_outlined),
+                    onPressed: () => setState(() => _showNotesPanel = !_showNotesPanel),
+                  ),
+                  if (notesCount > 0)
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          notesCount.toString(),
+                          style: const TextStyle(fontSize: 10, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+          IconButton(
+            icon: Icon(_showChat ? Icons.chat_bubble : Icons.chat_bubble_outline),
+            onPressed: () => setState(() => _showChat = !_showChat),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () {
+               context.read<SlideService>().clearSlides();
+               context.read<AIService>().clearConversation();
+            },
+          ),
+        ],
+      ),
+      body: Consumer<SlideService>(
         builder: (context, slideService, _) {
-          if (slideService.hasSlides) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  slideService.currentSlideModel!.fileName,
-                  style: const TextStyle(fontSize: 16),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  'Slide ${slideService.currentSlideIndex + 1} of ${slideService.totalSlides}',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
-                ),
-              ],
-            );
-          }
-          return const Text('Slide Learning');
+          if (slideService.isLoading) return _buildLoading();
+          if (!slideService.hasSlides) return _buildUploadView();
+          return _buildMainView(slideService);
         },
       ),
-      backgroundColor: Colors.deepPurple,
-      foregroundColor: Colors.white,
-      actions: [
-        // Toggle chat panel
-        IconButton(
-          icon: Icon(_showChat ? Icons.chat_bubble : Icons.chat_bubble_outline),
-          onPressed: () => setState(() => _showChat = !_showChat),
-          tooltip: 'Toggle Chat',
-        ),
-        // Analyze current slide
-        Consumer<SlideService>(
-          builder: (context, slideService, _) {
-            return IconButton(
-              icon: _isAnalyzing 
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                    )
-                  : const Icon(Icons.auto_awesome),
-              onPressed: slideService.hasSlides && !_isAnalyzing 
-                  ? _analyzeCurrentSlide 
-                  : null,
-              tooltip: 'Analyze Slide',
-            );
-          },
-        ),
-        // Clear slides
-        Consumer<SlideService>(
-          builder: (context, slideService, _) {
-            return IconButton(
-              icon: const Icon(Icons.close),
-              onPressed: slideService.hasSlides 
-                  ? () {
-                      slideService.clearSlides();
-                      context.read<AIService>().clearSlideContext();
-                    }
-                  : null,
-              tooltip: 'Close Slides',
-            );
-          },
-        ),
-      ],
     );
   }
 
-  Widget _buildBody() {
-    return Consumer<SlideService>(
-      builder: (context, slideService, _) {
-        if (slideService.isLoading || slideService.isProcessing) {
-          return _buildLoadingView(slideService);
-        }
-        
-        if (!slideService.hasSlides) {
-          return _buildUploadView();
-        }
-        
-        return _buildSlideViewerWithChat(slideService);
-      },
-    );
-  }
-
-  Widget _buildLoadingView(SlideService slideService) {
-    return Center(
+  Widget _buildLoading() {
+    return const Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const CircularProgressIndicator(),
-          const SizedBox(height: 16),
-          Text(
-            'Processing slides...',
-            style: TextStyle(color: Colors.grey[600]),
-          ),
-          if (slideService.processingProgress > 0)
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: LinearProgressIndicator(
-                value: slideService.processingProgress,
-                backgroundColor: Colors.grey[200],
-                valueColor: const AlwaysStoppedAnimation<Color>(Colors.deepPurple),
-              ),
-            ),
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text("Processing document..."),
         ],
       ),
     );
@@ -303,495 +229,418 @@ class _SlideViewerScreenState extends State<SlideViewerScreen> {
 
   Widget _buildUploadView() {
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(32),
-              decoration: BoxDecoration(
-                color: Colors.deepPurple.shade50,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.upload_file,
-                size: 80,
-                color: Colors.deepPurple.shade300,
-              ),
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'Upload Your Slides',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Colors.deepPurple,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Support for PDF files up to 50MB',
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.grey[600],
-              ),
-            ),
-            const SizedBox(height: 32),
-            ElevatedButton.icon(
-              onPressed: _pickAndLoadFile,
-              icon: const Icon(Icons.folder_open),
-              label: const Text('Choose File'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.deepPurple,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 48),
-            _buildFeaturesList(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFeaturesList() {
-    return Column(
-      children: [
-        _buildFeatureRow(Icons.visibility, 'AI analyzes slide content'),
-        const SizedBox(height: 12),
-        _buildFeatureRow(Icons.chat, 'Ask questions about any slide'),
-        const SizedBox(height: 12),
-        _buildFeatureRow(Icons.lightbulb, 'Get smart explanations'),
-      ],
-    );
-  }
-
-  Widget _buildFeatureRow(IconData icon, String text) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, color: Colors.deepPurple.shade300, size: 20),
-        const SizedBox(width: 8),
-        Text(
-          text,
-          style: TextStyle(color: Colors.grey[700]),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSlideViewerWithChat(SlideService slideService) {
-    return Row(
-      children: [
-        // Slide Viewer Panel
-        Expanded(
-          flex: _showChat ? 3 : 5,
-          child: Column(
-            children: [
-              // Main slide display
-              Expanded(
-                child: _buildSlideDisplay(slideService),
-              ),
-              // Thumbnail strip
-              _buildThumbnailStrip(slideService),
-              // Navigation controls
-              _buildNavigationControls(slideService),
-            ],
-          ),
-        ),
-        // Chat Panel
-        if (_showChat)
-          Container(
-            width: 400,
-            decoration: BoxDecoration(
-              border: Border(
-                left: BorderSide(color: Colors.grey.shade300),
-              ),
-            ),
-            child: _buildChatPanel(),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildSlideDisplay(SlideService slideService) {
-    final currentSlide = slideService.currentSlide;
-    
-    if (currentSlide == null || currentSlide.imageBytes == null) {
-      return const Center(child: Text('No slide to display'));
-    }
-    
-    return GestureDetector(
-      onDoubleTap: () {
-        setState(() {
-          _zoomLevel = _zoomLevel == 1.0 ? 2.0 : 1.0;
-        });
-      },
-      child: InteractiveViewer(
-        minScale: 0.5,
-        maxScale: 4.0,
-        child: Center(
-          child: Transform.scale(
-            scale: _zoomLevel,
-            child: Image.memory(
-              currentSlide.imageBytes!,
-              fit: BoxFit.contain,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildThumbnailStrip(SlideService slideService) {
-    return Container(
-      height: 100,
-      color: Colors.grey.shade100,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        itemCount: slideService.totalSlides,
-        itemBuilder: (context, index) {
-          final isSelected = index == slideService.currentSlideIndex;
-          final slide = slideService.currentSlideModel!.slides[index];
-          
-          return GestureDetector(
-            onTap: () => _onSlideChanged(index),
-            child: Container(
-              width: 80,
-              margin: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: isSelected ? Colors.deepPurple : Colors.grey.shade300,
-                  width: isSelected ? 3 : 1,
-                ),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Stack(
-                children: [
-                  if (slide.imageBytes != null)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(3),
-                      child: Image.memory(
-                        slide.imageBytes!,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        height: double.infinity,
-                      ),
-                    )
-                  else
-                    const Center(child: Icon(Icons.image, color: Colors.grey)),
-                  // Slide number badge
-                  Positioned(
-                    right: 4,
-                    bottom: 4,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        '${index + 1}',
-                        style: const TextStyle(color: Colors.white, fontSize: 10),
-                      ),
-                    ),
-                  ),
-                  // Analyzed indicator
-                  if (slide.isAnalyzed)
-                    const Positioned(
-                      left: 4,
-                      top: 4,
-                      child: Icon(Icons.check_circle, color: Colors.green, size: 16),
-                    ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildNavigationControls(SlideService slideService) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: Colors.grey.shade200,
-      child: Row(
+      child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          IconButton(
-            icon: const Icon(Icons.skip_previous),
-            onPressed: slideService.currentSlideIndex > 0
-                ? () => _onSlideChanged(0)
-                : null,
-            tooltip: 'First Slide',
-          ),
-          IconButton(
-            icon: const Icon(Icons.navigate_before),
-            onPressed: slideService.currentSlideIndex > 0
-                ? () => _onSlideChanged(slideService.currentSlideIndex - 1)
-                : null,
-            tooltip: 'Previous Slide',
-          ),
+          Icon(Icons.upload_file, size: 80, color: Colors.deepPurple.shade200),
+          const SizedBox(height: 20),
+          const Text("Upload a PDF to start learning", style: TextStyle(fontSize: 18)),
+          const SizedBox(height: 20),
+          ElevatedButton.icon(
+            onPressed: _pickAndLoadFile,
+            icon: const Icon(Icons.folder_open),
+            label: const Text("Select PDF File"),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMainView(SlideService slideService) {
+    // Update note controller when slide changes
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadNoteForCurrentSlide();
+    });
+    
+    return Row(
+      children: [
+        // LEFT: Notes Panel (if shown)
+        if (_showNotesPanel) _buildNotesPanel(),
+        
+        // CENTER: Slides
+        Expanded(
+          flex: _showChat ? 3 : 5,
+          child: _buildSlideViewer(slideService),
+        ),
+        
+        // RIGHT: Chat
+        if (_showChat) _buildChatPanel(),
+      ],
+    );
+  }
+
+  Widget _buildNotesPanel() {
+    return Container(
+      width: 300,
+      decoration: BoxDecoration(
+        border: Border(right: BorderSide(color: Colors.grey.shade300)),
+        color: Colors.grey.shade50,
+      ),
+      child: Column(
+        children: [
+          // Header
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
+              color: Colors.deepPurple.shade50,
+              border: Border(bottom: BorderSide(color: Colors.grey.shade300)),
             ),
-            child: Text(
-              '${slideService.currentSlideIndex + 1} / ${slideService.totalSlides}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
+            child: Row(
+              children: [
+                const Icon(Icons.book, color: Colors.deepPurple, size: 20),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'AI Notes & Definitions',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 20),
+                  onPressed: () => setState(() => _showNotesPanel = false),
+                ),
+              ],
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.navigate_next),
-            onPressed: slideService.currentSlideIndex < slideService.totalSlides - 1
-                ? () => _onSlideChanged(slideService.currentSlideIndex + 1)
-                : null,
-            tooltip: 'Next Slide',
-          ),
-          IconButton(
-            icon: const Icon(Icons.skip_next),
-            onPressed: slideService.currentSlideIndex < slideService.totalSlides - 1
-                ? () => _onSlideChanged(slideService.totalSlides - 1)
-                : null,
-            tooltip: 'Last Slide',
-          ),
-          const SizedBox(width: 16),
-          // Zoom controls
-          IconButton(
-            icon: const Icon(Icons.zoom_out),
-            onPressed: _zoomLevel > 0.5
-                ? () => setState(() => _zoomLevel -= 0.25)
-                : null,
-            tooltip: 'Zoom Out',
-          ),
-          Text('${(_zoomLevel * 100).toInt()}%'),
-          IconButton(
-            icon: const Icon(Icons.zoom_in),
-            onPressed: _zoomLevel < 4.0
-                ? () => setState(() => _zoomLevel += 0.25)
-                : null,
-            tooltip: 'Zoom In',
+          
+          // Content
+          Expanded(
+            child: Consumer<AIService>(
+              builder: (context, aiService, _) {
+                if (!aiService.hasDocumentLoaded) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Text(
+                        'Upload a document to see AI-generated notes and definitions',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    ),
+                  );
+                }
+                
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // AI Notes Section
+                      if (aiService.documentNotes.isNotEmpty) ...[
+                        const Row(
+                          children: [
+                            Icon(Icons.notes, size: 18, color: Colors.deepPurple),
+                            SizedBox(width: 8),
+                            Text(
+                              'Comprehensive Notes',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.deepPurple,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.grey.shade300),
+                          ),
+                          child: SelectableText(
+                            aiService.documentNotes,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                      ],
+                      
+                      // Definitions Section
+                      if (aiService.definitions.isNotEmpty) ...[
+                        const Row(
+                          children: [
+                            Icon(Icons.auto_stories, size: 18, color: Colors.deepPurple),
+                            SizedBox(width: 8),
+                            Text(
+                              'Key Definitions',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.deepPurple,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        ...aiService.definitions.entries.map((entry) {
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.grey.shade300),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  entry.key,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                    color: Colors.deepPurple,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                SelectableText(
+                                  entry.value,
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
+                    ],
+                  ),
+                );
+              },
+            ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildSlideViewer(SlideService slideService) {
+    return Column(
+      children: [
+        // Main slide view
+        Expanded(
+          child: GestureDetector(
+            onDoubleTap: () => setState(() => _zoomLevel = _zoomLevel == 1.0 ? 2.0 : 1.0),
+            child: InteractiveViewer(
+              scaleEnabled: true,
+              minScale: 0.5,
+              maxScale: 4.0,
+              child: Center(
+                child: Transform.scale(
+                  scale: _zoomLevel,
+                  child: Image.memory(
+                    slideService.currentSlide!.imageBytes!,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        
+        // Student Notes for current slide
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.amber.shade50,
+            border: Border(top: BorderSide(color: Colors.grey.shade300)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.edit_note, size: 18, color: Colors.orange),
+                  const SizedBox(width: 8),
+                  Consumer<SlideService>(
+                    builder: (context, ss, _) {
+                      return Text(
+                        'My Notes - Slide ${ss.currentSlideIndex + 1}',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      );
+                    },
+                  ),
+                  const Spacer(),
+                  Consumer<NotesService>(
+                    builder: (context, notesService, _) {
+                      return notesService.hasNoteForSlide(slideService.currentSlideIndex)
+                          ? const Icon(Icons.check_circle, color: Colors.green, size: 18)
+                          : const Icon(Icons.circle_outlined, color: Colors.grey, size: 18);
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _noteController,
+                focusNode: _noteFocusNode,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  hintText: 'Add your notes for this slide...',
+                  border: const OutlineInputBorder(),
+                  filled: true,
+                  fillColor: Colors.white,
+                  contentPadding: const EdgeInsets.all(8),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.save, color: Colors.deepPurple),
+                    onPressed: _saveNoteForCurrentSlide,
+                  ),
+                ),
+                onChanged: (_) {
+                  // Auto-save after 2 seconds of inactivity
+                  Future.delayed(const Duration(seconds: 2), () {
+                    if (mounted && _noteFocusNode.hasFocus) {
+                      _saveNoteForCurrentSlide();
+                    }
+                  });
+                },
+              ),
+            ],
+          ),
+        ),
+        
+        // Thumbnails
+        SizedBox(
+          height: 80,
+          child: Consumer<NotesService>(
+            builder: (context, notesService, _) {
+              return ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: slideService.totalSlides,
+                itemBuilder: (context, index) {
+                  final isSelected = index == slideService.currentSlideIndex;
+                  final hasNote = notesService.hasNoteForSlide(index);
+                  
+                  return GestureDetector(
+                    onTap: () => slideService.goToSlide(index),
+                    child: Stack(
+                      children: [
+                        Container(
+                          width: 60,
+                          margin: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            border: isSelected 
+                                ? Border.all(color: Colors.deepPurple, width: 2)
+                                : null,
+                          ),
+                          child: Image.memory(
+                            slideService.currentSlideModel!.slides[index].imageBytes!,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                        if (hasNote)
+                          const Positioned(
+                            top: 8,
+                            right: 8,
+                            child: Icon(
+                              Icons.note,
+                              color: Colors.orange,
+                              size: 16,
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildChatPanel() {
-    return Column(
-      children: [
-        // Chat header
-        Container(
-          padding: const EdgeInsets.all(12),
-          color: Colors.deepPurple.shade50,
-          child: Row(
-            children: [
-              const Icon(Icons.auto_awesome, color: Colors.deepPurple),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'AI Tutor',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    Text(
-                      'Ask about this slide',
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                  ],
-                ),
-              ),
-              Consumer<AIService>(
-                builder: (context, aiService, _) {
-                  if (aiService.hasSlideContext) {
-                    return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.green.shade100,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Text(
-                        '✓ Slide Context',
-                        style: TextStyle(fontSize: 10, color: Colors.green),
-                      ),
-                    );
-                  }
-                  return const SizedBox.shrink();
-                },
-              ),
-            ],
-          ),
-        ),
-        // Quick actions
-        _buildQuickActions(),
-        // Chat messages
-        Expanded(
-          child: Consumer<AIService>(
-            builder: (context, aiService, _) {
-              if (aiService.conversationHistory.isEmpty) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.lightbulb_outline,
-                          size: 48,
-                          color: Colors.grey.shade400,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Ask me anything about this slide!',
-                          style: TextStyle(color: Colors.grey.shade600),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }
-              
-              return ListView.builder(
-                controller: _chatScrollController,
-                padding: const EdgeInsets.all(8),
-                itemCount: aiService.conversationHistory.length,
-                itemBuilder: (context, index) {
-                  final message = aiService.conversationHistory[index];
-                  return _buildMessageBubble(message);
-                },
-              );
-            },
-          ),
-        ),
-        // Loading indicator
-        Consumer<AIService>(
-          builder: (context, aiService, _) {
-            if (aiService.isLoading) {
-              return Container(
-                padding: const EdgeInsets.all(8),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    SizedBox(width: 8),
-                    Text('Thinking...', style: TextStyle(color: Colors.grey)),
-                  ],
-                ),
-              );
-            }
-            return const SizedBox.shrink();
-          },
-        ),
-        // Input field
-        _buildChatInput(),
-      ],
-    );
-  }
-
-  Widget _buildQuickActions() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Wrap(
-        spacing: 8,
-        children: [
-          _buildQuickActionChip('Explain this slide'),
-          _buildQuickActionChip('What does this mean?'),
-          _buildQuickActionChip('Give me examples'),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQuickActionChip(String label) {
-    return ActionChip(
-      label: Text(label, style: const TextStyle(fontSize: 11)),
-      onPressed: () => _sendQuickAction(label),
-      backgroundColor: Colors.grey.shade100,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-    );
-  }
-
-  Widget _buildMessageBubble(ChatMessage message) {
-    final isUser = message.isUser;
-    
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.all(12),
-        constraints: const BoxConstraints(maxWidth: 320),
-        decoration: BoxDecoration(
-          color: isUser ? Colors.deepPurple : Colors.grey.shade200,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          message.content,
-          style: TextStyle(
-            color: isUser ? Colors.white : Colors.black87,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildChatInput() {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade300,
-            blurRadius: 4,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: Row(
+      width: 350,
+      decoration: BoxDecoration(border: Border(left: BorderSide(color: Colors.grey.shade300))),
+      child: Column(
         children: [
           Expanded(
-            child: TextField(
-              controller: _messageController,
-              focusNode: _focusNode,
-              decoration: InputDecoration(
-                hintText: 'Ask about this slide...',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-              ),
-              maxLines: null,
-              onSubmitted: (_) => _sendMessage(),
+            child: Consumer<AIService>(
+              builder: (context, ai, _) {
+                return ListView.builder(
+                  controller: _chatScrollController,
+                  padding: const EdgeInsets.all(12),
+                  itemCount: ai.conversationHistory.length,
+                  itemBuilder: (context, index) {
+                    final msg = ai.conversationHistory[index];
+                    final isUser = msg.isUser;
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: isUser ? Colors.deepPurple.shade50 : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isUser ? "You" : (msg.personality ?? "AI"),
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                          ),
+                          const SizedBox(height: 8),
+                          MarkdownBody(
+                            data: msg.content,
+                            selectable: true,
+                            styleSheet: MarkdownStyleSheet(
+                              p: const TextStyle(
+                                color: Colors.black87,
+                                fontSize: 14,
+                              ),
+                              tableBorder: TableBorder.all(color: Colors.grey),
+                              tableHeadAlign: TextAlign.center,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
             ),
           ),
-          const SizedBox(width: 8),
-          Consumer<AIService>(
-            builder: (context, aiService, _) {
-              return FloatingActionButton.small(
-                onPressed: aiService.isLoading ? null : _sendMessage,
-                backgroundColor: Colors.deepPurple,
-                child: const Icon(Icons.send, color: Colors.white),
-              );
-            },
-          ),
+          // Input with Enter key support
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: KeyboardListener(
+                    focusNode: FocusNode(),
+                    onKeyEvent: (event) {
+                      if (event is KeyDownEvent &&
+                          event.logicalKey == LogicalKeyboardKey.enter &&
+                          !HardwareKeyboard.instance.isShiftPressed) {
+                        _sendMessage();
+                      }
+                    },
+                    child: TextField(
+                      controller: _messageController,
+                      focusNode: _messageFocusNode,
+                      maxLines: null,
+                      decoration: const InputDecoration(
+                        hintText: "Ask about this page... (Enter to send)",
+                        border: OutlineInputBorder(),
+                      ),
+                      onSubmitted: (_) => _sendMessage(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.send),
+                  onPressed: _sendMessage,
+                )
+              ],
+            ),
+          )
         ],
       ),
     );

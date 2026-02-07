@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../data/models/chat_message.dart';
 
+/// Service for saving and resuming conversation states
 class ConversationStateService {
   final SharedPreferences _prefs;
   
@@ -49,5 +50,18 @@ class ConversationStateService {
   /// Check if there's a saved state
   bool hasSavedState() {
     return _prefs.containsKey(_stateKey);
+  }
+
+  /// Get time of last saved state
+  DateTime? getLastSaveTime() {
+    final stateJson = _prefs.getString(_stateKey);
+    if (stateJson == null) return null;
+    
+    try {
+      final state = jsonDecode(stateJson) as Map<String, dynamic>;
+      return DateTime.parse(state['timestamp'] as String);
+    } catch (e) {
+      return null;
+    }
   }
 }

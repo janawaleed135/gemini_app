@@ -23,7 +23,7 @@ class SessionModel {
     required this.userId,
     required this.personalityUsed,
   })  : messageCount = transcript.length,
-        duration = endTime != null ? endTime.difference(startTime) : null;
+        duration = endTime?.difference(startTime);
 
   /// Check if session is active
   bool get isActive => endTime == null;

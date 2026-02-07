@@ -3,10 +3,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'core/services/firebase_service.dart'; // ADD THIS
+import 'core/services/firebase_service.dart';
 import 'core/services/voice_service.dart';
 import 'core/services/ai_service.dart';
 import 'core/services/slide_service.dart';
+import 'core/services/notes_service.dart';
 import 'data/repositories/session_repository.dart';
 import 'presentation/providers/session_provider.dart';
 import 'presentation/screens/voice_test_screen.dart';
@@ -40,6 +41,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => VoiceService()),
         ChangeNotifierProvider(create: (_) => AIService()),
         ChangeNotifierProvider(create: (_) => SlideService()),
+        ChangeNotifierProvider(create: (context) => NotesService(prefs)),
         
         // Repository
         Provider<SessionRepository>(
@@ -51,11 +53,13 @@ class MyApp extends StatelessWidget {
           create: (context) => SessionProvider(
             aiService: Provider.of<AIService>(context, listen: false),
             repository: Provider.of<SessionRepository>(context, listen: false),
+            prefs: prefs,
           ),
           update: (_, aiService, repository, previous) =>
               previous ?? SessionProvider(
                 aiService: aiService,
                 repository: repository,
+                prefs: prefs,
               ),
         ),
       ],
@@ -113,7 +117,7 @@ class HomeScreen extends StatelessWidget {
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.deepPurple.withOpacity(0.3),
+                        color: Colors.deepPurple.withValues(alpha: 0.3),
                         blurRadius: 20,
                         spreadRadius: 5,
                       ),
@@ -186,7 +190,7 @@ class HomeScreen extends StatelessWidget {
                 
                 const SizedBox(height: 16),
                 
-                // Branch 3: Slide Learning - NEW
+                // Branch 3: Slide Learning
                 _MenuButton(
                   icon: Icons.slideshow,
                   label: 'Slide Learning',
@@ -264,7 +268,7 @@ class _MenuButton extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
+                color: Colors.white.withValues(alpha: 0.2), 
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(icon, size: 32),
@@ -286,7 +290,7 @@ class _MenuButton extends StatelessWidget {
                     subtitle,
                     style: TextStyle(
                       fontSize: 14,
-                      color: Colors.white.withOpacity(0.9),
+                      color: Colors.white.withValues(alpha: 0.9), 
                     ),
                   ),
                 ],

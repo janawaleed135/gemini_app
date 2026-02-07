@@ -4,99 +4,45 @@ import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_remote_config/firebase_remote_config.dart';
 import '../../firebase_options.dart';
+import 'api_key_manager.dart'; // Import the manager
 
 class FirebaseService {
   static FirebaseService? _instance;
   static FirebaseService get instance => _instance ??= FirebaseService._();
-  
   FirebaseService._();
 
-  FirebaseRemoteConfig? _remoteConfig;
-  bool _isInitialized = false;
-  String _cachedApiKey = '';
-
-  bool get isInitialized => _isInitialized;
-  String get apiKey => _cachedApiKey;
-
-  /// Initialize Firebase and Remote Config
   Future<bool> initialize() async {
-    if (_isInitialized) {
-      if (kDebugMode) print('✅ Firebase already initialized');
-      return true;
-    }
-
     try {
-      if (kDebugMode) print('🔥 Initializing Firebase...');
+      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       
-      // Initialize Firebase
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-      
-      if (kDebugMode) print('✅ Firebase initialized');
+      final remoteConfig = FirebaseRemoteConfig.instance;
+      await remoteConfig.setConfigSettings(RemoteConfigSettings(
+        fetchTimeout: const Duration(seconds: 10),
+        minimumFetchInterval: const Duration(hours: 1),
+      ));
 
-      // Initialize Remote Config
-      _remoteConfig = FirebaseRemoteConfig.instance;
-      
-      // Set config settings
-      await _remoteConfig!.setConfigSettings(
-        RemoteConfigSettings(
-          fetchTimeout: const Duration(seconds: 10),
-          minimumFetchInterval: const Duration(hours: 1), // Cache for 1 hour
-        ),
-      );
+      // Default value is empty string to trigger fallback
+      await remoteConfig.setDefaults({'gemini_api_key_list': ''});
+      await remoteConfig.fetchAndActivate();
 
-      // Set default values (fallback if fetch fails)
-      await _remoteConfig!.setDefaults({
-        'gemini_api_key': 'AIzaSyBF6f5CFVuAvviKurs9pDd-vdewQyEnZac',
-      });
-
-      if (kDebugMode) print('🔄 Fetching Remote Config...');
+      // 1. FETCH THE LIST STRING
+      final keyString = remoteConfig.getString('gemini_api_key_list');
       
-      // Fetch and activate
-      await _remoteConfig!.fetchAndActivate();
-      
-      // Get the API key
-      _cachedApiKey = _remoteConfig!.getString('gemini_api_key');
-      
-      if (kDebugMode) {
-        final preview = _cachedApiKey.length > 10 
-            ? '${_cachedApiKey.substring(0, 10)}...' 
-            : _cachedApiKey;
-        print('🔑 API Key loaded: $preview');
+      // 2. PARSE AND SEND TO MANAGER
+      if (keyString.isNotEmpty && keyString.contains(',')) {
+        final keys = keyString.split(',').map((e) => e.trim()).toList();
+        // Send valid keys to the manager
+        ApiKeyManager.instance.setKeys(keys);
+      } else if (keyString.length > 20) {
+        // Handle case where it's just one single key
+        ApiKeyManager.instance.setKeys([keyString.trim()]);
       }
-
-      _isInitialized = true;
       
-      if (kDebugMode) print('✅ Remote Config initialized');
+      if (kDebugMode) print('✅ Firebase Service Initialized');
       return true;
-      
     } catch (e) {
-      if (kDebugMode) print('❌ Firebase initialization error: $e');
-      
-      // Use fallback API key on error
-      _cachedApiKey = 'AIzaSyBF6f5CFVuAvviKurs9pDd-vdewQyEnZac';
-      _isInitialized = true; // Still mark as initialized to continue
-      
-      return false;
-    }
-  }
-
-  /// Manually refresh the API key from Remote Config
-  Future<void> refreshApiKey() async {
-    if (_remoteConfig == null) return;
-    
-    try {
-      await _remoteConfig!.fetchAndActivate();
-      _cachedApiKey = _remoteConfig!.getString('gemini_api_key');
-      
-      if (kDebugMode) {
-        print('🔄 API key refreshed from Remote Config');
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error refreshing API key: $e');
-      }
+      if (kDebugMode) print('❌ Firebase Init Error: $e');
+      return false; 
     }
   }
 }

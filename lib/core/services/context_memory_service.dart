@@ -49,6 +49,9 @@ class ContextMemoryService {
       'help',
       'unclear',
       'don\'t get it',
+      'what',
+      'huh',
+      '?',
     ];
     
     final lowerMessage = userMessage.toLowerCase();
@@ -66,6 +69,9 @@ class ContextMemoryService {
       'i see',
       'ah okay',
       'thanks',
+      'thank you',
+      'perfect',
+      'great',
     ];
     
     final lowerMessage = userMessage.toLowerCase();
@@ -83,7 +89,7 @@ class ContextMemoryService {
   String getProgressSummary() {
     final buffer = StringBuffer();
     
-    buffer.writeln('LEARNING PROGRESS SUMMARY:');
+    buffer.writeln('LEARNING PROGRESS:');
     buffer.writeln('Concepts explored: ${_explainedConcepts.length}');
     
     final understood = _explainedConcepts.values

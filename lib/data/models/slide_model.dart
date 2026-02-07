@@ -12,6 +12,8 @@ class SlideModel {
   final List<SlideData> slides;
   final DateTime uploadedAt;
   final int fileSizeBytes;
+  final bool isAnalyzed;
+
 
   SlideModel({
     required this.id,
@@ -22,6 +24,7 @@ class SlideModel {
     required this.slides,
     required this.uploadedAt,
     required this.fileSizeBytes,
+    required this.isAnalyzed,
   });
 
   SlideModel copyWith({
@@ -33,6 +36,7 @@ class SlideModel {
     List<SlideData>? slides,
     DateTime? uploadedAt,
     int? fileSizeBytes,
+    bool? isAnalyzed,
   }) {
     return SlideModel(
       id: id ?? this.id,
@@ -43,6 +47,7 @@ class SlideModel {
       slides: slides ?? this.slides,
       uploadedAt: uploadedAt ?? this.uploadedAt,
       fileSizeBytes: fileSizeBytes ?? this.fileSizeBytes,
+      isAnalyzed: isAnalyzed ?? this.isAnalyzed,
     );
   }
 
